@@ -1,3 +1,4 @@
+
 function formatDate(date) {
   const dd = String(date.getDate()).padStart(2, '0');
   const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -11,26 +12,36 @@ exports.handler = async () => {
     const start = new Date(end);
     start.setDate(start.getDate() - 10);
 
-    const url = new URL(
-      'https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)'
-    );
+    const base = 'https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)';
 
-    url.searchParams.set('@dataInicial', `'${formatDate(start)}'`);
-    url.searchParams.set('@dataFinalCotacao', `'${formatDate(end)}'`);
-    url.searchParams.set('$format', 'json');
-    url.searchParams.set('$top', '100');
-    url.searchParams.set('$orderby', 'dataHoraCotacao desc');
+    const params = [
+      `@dataInicial=${encodeURIComponent("'" + formatDate(start) + "'")}`,
+      `@dataFinalCotacao=${encodeURIComponent("'" + formatDate(end) + "'")}`,
+      '$format=json',
+      '$top=100'
+    ];
+
+    const url = `${base}?${params.join('&')}`;
 
     const response = await fetch(url);
 
-    if (!response.ok) throw new Error('Erro no Banco Central');
+    if (!response.ok) {
+      throw new Error(`Banco Central HTTP ${response.status}`);
+    }
 
     const data = await response.json();
-    const latest = (data.value || []).find(
-      item => Number.isFinite(Number(item.cotacaoVenda))
-    );
 
-    if (!latest) throw new Error('Cotação não encontrada');
+    const rows = (data.value || [])
+      .filter(item => Number.isFinite(Number(item.cotacaoVenda)))
+      .sort((a, b) =>
+        new Date(b.dataHoraCotacao) - new Date(a.dataHoraCotacao)
+      );
+
+    if (!rows.length) {
+      throw new Error('Nenhuma cotação encontrada');
+    }
+
+    const latest = rows[0];
 
     return {
       statusCode: 200,
@@ -48,11 +59,14 @@ exports.handler = async () => {
       })
     };
   } catch (error) {
+    console.error('ERRO MARKET:', error);
+
     return {
       statusCode: 502,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        error: 'Não foi possível consultar o dólar.'
+        error: 'Não foi possível consultar o dólar.',
+        detail: error.message
       })
     };
   }
